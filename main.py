@@ -34,7 +34,7 @@ class CloudPhoneManager(tk.Tk):
     def __init__(self):
         super().__init__()
 
-        self.title("云手机管理 - 全按钮显示版")
+        self.title("红手指")
         self.geometry("1160x650")
         self.resizable(False, False)
         self.configure(bg="white")
@@ -619,7 +619,7 @@ class CloudPhoneManager(tk.Tk):
         draw.rectangle((0, 0, width, top_h), fill="#ffffff")
         draw.line((0, top_h - 1, width, top_h - 1), fill="#d9e0ea")
         phone_name = self.phone_ids[self.selected_phone_index]
-        title = f"{phone_name} (VM010036084034)  高速"
+        title = f"红手指 {phone_name} (VM010036084034)  高速"
         draw.text((16, 14), title, fill="#737d8c", font=title_font)
 
         close_x1 = width - 48
