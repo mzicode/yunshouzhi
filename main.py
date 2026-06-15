@@ -44,6 +44,7 @@ class CloudPhoneManager(tk.Tk):
         self.phone_buttons = []
         self.id_buttons = []
         self.id_row_images = []
+        self.phone_current_images = []
         self.phone_image = self.make_phone_image()
         self.audio_image = self.make_status_image("音频播放中")
         self.device_icon_source = self.load_pil_icon("device.png")
@@ -68,6 +69,10 @@ class CloudPhoneManager(tk.Tk):
         self.rename_text = ""
         self.rename_editing = False
         self.rename_input_visible = False
+        self.selected_phone_index = None
+        self.zoom_window = None
+        self.zoom_button = None
+        self.zoom_image = None
 
         self.build_ui()
         self.show_all_phones()
@@ -203,6 +208,7 @@ class CloudPhoneManager(tk.Tk):
             x = 165 + column * 245
             y = 24 + row * 148
             self.create_phone(index + 1, phone_id, x, y)
+        self.update_zoom_image_from_current()
 
     def clear_phones(self):
         for widget in self.phone_buttons + self.id_buttons:
@@ -210,6 +216,7 @@ class CloudPhoneManager(tk.Tk):
         self.phone_buttons = []
         self.id_buttons = []
         self.id_row_images = []
+        self.phone_current_images = []
 
     def create_phone(self, number, phone_id, x, y):
         # 使用 Button 作为云手机卡片，因为当前 Mac 环境里按钮控件已经确认可见。
@@ -224,7 +231,7 @@ class CloudPhoneManager(tk.Tk):
             relief=tk.FLAT,
             bd=0,
             highlightthickness=0,
-            command=lambda value=phone_id: self.select_phone(value),
+            command=lambda idx=number - 1: self.open_zoom_window(idx),
         )
         phone_button.place(x=x, y=y, width=PHONE_WIDTH, height=PHONE_HEIGHT)
 
@@ -246,6 +253,7 @@ class CloudPhoneManager(tk.Tk):
         self.phone_buttons.append(phone_button)
         self.id_buttons.append(id_button)
         self.id_row_images.append(id_row_image)
+        self.phone_current_images.append(self.phone_image)
 
     def upload_video(self):
         if cv2 is None:
@@ -311,8 +319,10 @@ class CloudPhoneManager(tk.Tk):
         image = ImageOps.fit(image, (PHONE_WIDTH, PHONE_HEIGHT), Image.LANCZOS)
         self.video_frame_image = ImageTk.PhotoImage(image)
 
-        for button in self.phone_buttons:
+        for index, button in enumerate(self.phone_buttons):
             button.config(image=self.video_frame_image, text="")
+            self.phone_current_images[index] = self.video_frame_image
+        self.update_zoom_image_from_current()
 
         current_seconds = int(self.video_capture.get(cv2.CAP_PROP_POS_MSEC) / 1000)
         self.update_progress_value(current_seconds)
@@ -381,6 +391,9 @@ class CloudPhoneManager(tk.Tk):
         self.stop_video()
         for button in self.phone_buttons:
             button.config(image=self.audio_image, text="")
+        for index in range(len(self.phone_current_images)):
+            self.phone_current_images[index] = self.audio_image
+        self.update_zoom_image_from_current()
 
         self.audio_path = audio_path
         self.audio_seek_seconds = 0
@@ -522,6 +535,62 @@ class CloudPhoneManager(tk.Tk):
             image = self.make_id_row_image(self.phone_ids[index])
             button.config(image=image)
             self.id_row_images.append(image)
+
+    def open_zoom_window(self, index):
+        self.selected_phone_index = index
+        phone_name = self.phone_ids[index]
+
+        if self.zoom_window is not None and self.zoom_window.winfo_exists():
+            self.zoom_window.title(phone_name)
+            self.zoom_window.lift()
+            self.update_zoom_image_from_current()
+            return
+
+        self.zoom_window = tk.Toplevel(self)
+        self.zoom_window.title(phone_name)
+        self.zoom_window.geometry("640x360+260+140")
+        self.zoom_window.resizable(True, True)
+        self.zoom_window.configure(bg="white")
+        self.zoom_window.protocol("WM_DELETE_WINDOW", self.close_zoom_window)
+        self.zoom_window.bind("<Configure>", lambda _event: self.update_zoom_image_from_current())
+
+        self.zoom_button = tk.Button(
+            self.zoom_window,
+            relief=tk.FLAT,
+            bd=0,
+            padx=0,
+            pady=0,
+            highlightthickness=0,
+            takefocus=0,
+        )
+        self.zoom_button.pack(fill=tk.BOTH, expand=True)
+        self.update_zoom_image_from_current()
+
+    def close_zoom_window(self):
+        if self.zoom_window is not None:
+            self.zoom_window.destroy()
+        self.zoom_window = None
+        self.zoom_button = None
+        self.zoom_image = None
+
+    def update_zoom_image_from_current(self):
+        if self.selected_phone_index is None:
+            return
+        if self.zoom_window is None or not self.zoom_window.winfo_exists() or self.zoom_button is None:
+            return
+        if self.selected_phone_index >= len(self.phone_current_images):
+            return
+
+        source = self.phone_current_images[self.selected_phone_index]
+        width = max(320, self.zoom_window.winfo_width())
+        height = max(180, self.zoom_window.winfo_height())
+        try:
+            pil_image = ImageTk.getimage(source).convert("RGB")
+            pil_image = ImageOps.fit(pil_image, (width, height), Image.LANCZOS)
+            self.zoom_image = ImageTk.PhotoImage(pil_image)
+            self.zoom_button.config(image=self.zoom_image, text="")
+        except Exception:
+            self.zoom_button.config(image=source, text="")
 
     def show_progress_controls(self, duration, current_seconds=0):
         self.media_duration = max(1, int(duration))
