@@ -585,12 +585,111 @@ class CloudPhoneManager(tk.Tk):
         width = max(320, self.zoom_window.winfo_width())
         height = max(180, self.zoom_window.winfo_height())
         try:
-            pil_image = ImageTk.getimage(source).convert("RGB")
-            pil_image = ImageOps.fit(pil_image, (width, height), Image.LANCZOS)
-            self.zoom_image = ImageTk.PhotoImage(pil_image)
+            content_image = ImageTk.getimage(source).convert("RGB")
+            zoom_ui = self.make_zoom_window_image(content_image, width, height)
+            self.zoom_image = ImageTk.PhotoImage(zoom_ui)
             self.zoom_button.config(image=self.zoom_image, text="")
         except Exception:
             self.zoom_button.config(image=source, text="")
+
+    def make_zoom_window_image(self, content_image, width, height):
+        image = Image.new("RGB", (width, height), "#f4f7fb")
+        draw = ImageDraw.Draw(image)
+        title_font = self.get_zoom_font(13)
+        small_font = self.get_zoom_font(11)
+        mini_font = self.get_zoom_font(10)
+
+        top_h = 42
+        side_w = 48
+        screen_x = 12
+        screen_y = top_h + 8
+        screen_w = max(100, width - side_w - screen_x - 10)
+        screen_h = max(80, height - screen_y - 12)
+
+        # Top emulator toolbar.
+        draw.rectangle((0, 0, width, top_h), fill="#f7f9fc")
+        draw.line((0, top_h - 1, width, top_h - 1), fill="#dce3ed")
+        phone_name = self.phone_ids[self.selected_phone_index]
+        title = f"{phone_name} (VM010036084034)  高速"
+        draw.text((14, 12), title, fill="#7c8492", font=title_font)
+
+        icon_y = 12
+        right_x = width - 170
+        self.draw_pin_icon(draw, right_x, icon_y + 2)
+        draw.text((right_x + 34, icon_y - 1), "-", fill="#98a1ad", font=title_font)
+        draw.rectangle((right_x + 66, icon_y + 2, right_x + 76, icon_y + 12), outline="#98a1ad", width=2)
+        draw.text((right_x + 100, icon_y - 1), "×", fill="#98a1ad", font=title_font)
+        draw.text((right_x + 136, icon_y - 1), "≪", fill="#98a1ad", font=title_font)
+
+        # Main screen.
+        draw.rectangle(
+            (screen_x - 1, screen_y - 1, screen_x + screen_w + 1, screen_y + screen_h + 1),
+            fill="#2d3642",
+        )
+        fitted = ImageOps.fit(content_image, (screen_w, screen_h), Image.LANCZOS)
+        image.paste(fitted, (screen_x, screen_y))
+
+        # Right toolbar.
+        side_x = width - side_w
+        draw.rectangle((side_x, top_h, width, height), fill="#f8fafc")
+        draw.line((side_x, top_h, side_x, height), fill="#dce3ed")
+
+        self.draw_wifi_icon(draw, side_x + 24, top_h + 18)
+        draw.text((side_x + 14, top_h + 36), "0ms", fill="#19c37d", font=mini_font)
+
+        self.draw_grid_icon(draw, side_x + 24, top_h + 74)
+        draw.text((side_x + 15, top_h + 94), "更多", fill="#9aa3ae", font=mini_font)
+
+        self.draw_back_icon(draw, side_x + 24, top_h + 136)
+        self.draw_home_icon(draw, side_x + 24, top_h + 184)
+        self.draw_recent_icon(draw, side_x + 24, top_h + 232)
+
+        return image
+
+    def get_zoom_font(self, size):
+        candidates = [
+            "/System/Library/Fonts/PingFang.ttc",
+            "/System/Library/Fonts/Supplemental/Arial.ttf",
+            "/Library/Fonts/Arial.ttf",
+            "arial.ttf",
+        ]
+        for path in candidates:
+            try:
+                return ImageFont.truetype(path, size)
+            except OSError:
+                continue
+        return ImageFont.load_default()
+
+    def draw_pin_icon(self, draw, x, y):
+        draw.line((x + 7, y, x + 15, y + 8), fill="#a0a8b3", width=2)
+        draw.line((x + 4, y + 8, x + 12, y + 16), fill="#a0a8b3", width=2)
+        draw.line((x + 10, y + 10, x + 4, y + 18), fill="#a0a8b3", width=2)
+
+    def draw_wifi_icon(self, draw, cx, cy):
+        color = "#1fcf7a"
+        draw.arc((cx - 12, cy - 10, cx + 12, cy + 14), 220, 320, fill=color, width=3)
+        draw.arc((cx - 8, cy - 6, cx + 8, cy + 10), 220, 320, fill=color, width=3)
+        draw.ellipse((cx - 2, cy + 4, cx + 2, cy + 8), fill=color)
+
+    def draw_grid_icon(self, draw, cx, cy):
+        color = "#a1aab5"
+        for row in range(2):
+            for col in range(2):
+                x = cx - 9 + col * 12
+                y = cy - 9 + row * 12
+                draw.rounded_rectangle((x, y, x + 7, y + 7), radius=2, outline=color, width=2)
+
+    def draw_back_icon(self, draw, cx, cy):
+        color = "#a1aab5"
+        draw.line((cx + 8, cy - 9, cx - 8, cy, cx + 8, cy + 9), fill=color, width=4)
+
+    def draw_home_icon(self, draw, cx, cy):
+        color = "#a1aab5"
+        draw.polygon([(cx - 10, cy), (cx, cy - 10), (cx + 10, cy), (cx + 7, cy), (cx + 7, cy + 10), (cx - 7, cy + 10), (cx - 7, cy)], fill=color)
+
+    def draw_recent_icon(self, draw, cx, cy):
+        color = "#a1aab5"
+        draw.rounded_rectangle((cx - 9, cy - 9, cx + 9, cy + 9), radius=2, outline=color, width=3)
 
     def show_progress_controls(self, duration, current_seconds=0):
         self.media_duration = max(1, int(duration))
