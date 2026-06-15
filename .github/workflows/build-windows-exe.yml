@@ -7,6 +7,9 @@ on:
       - main
       - master
 
+permissions:
+  contents: write
+
 jobs:
   build:
     runs-on: windows-latest
@@ -34,3 +37,12 @@ jobs:
         with:
           name: CloudPhoneManager-windows-exe
           path: dist/CloudPhoneManager.exe
+
+      - name: Publish release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: v1.0.${{ github.run_number }}
+          name: v1.0.${{ github.run_number }}
+          files: dist/CloudPhoneManager.exe
+          generate_release_notes: true
+          fail_on_unmatched_files: true
