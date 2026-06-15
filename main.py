@@ -564,6 +564,7 @@ class CloudPhoneManager(tk.Tk):
             takefocus=0,
         )
         self.zoom_button.pack(fill=tk.BOTH, expand=True)
+        self.zoom_button.bind("<Button-1>", self.on_zoom_click)
         self.update_zoom_image_from_current()
 
     def close_zoom_window(self):
@@ -572,6 +573,14 @@ class CloudPhoneManager(tk.Tk):
         self.zoom_window = None
         self.zoom_button = None
         self.zoom_image = None
+
+    def on_zoom_click(self, event):
+        if self.zoom_window is None or not self.zoom_window.winfo_exists():
+            return
+
+        width = max(320, self.zoom_window.winfo_width())
+        if event.y <= 48 and width - 52 <= event.x <= width - 12:
+            self.close_zoom_window()
 
     def update_zoom_image_from_current(self):
         if self.selected_phone_index is None:
@@ -593,56 +602,67 @@ class CloudPhoneManager(tk.Tk):
             self.zoom_button.config(image=source, text="")
 
     def make_zoom_window_image(self, content_image, width, height):
-        image = Image.new("RGB", (width, height), "#f4f7fb")
+        image = Image.new("RGB", (width, height), "#eef2f7")
         draw = ImageDraw.Draw(image)
-        title_font = self.get_zoom_font(13)
-        small_font = self.get_zoom_font(11)
+        title_font = self.get_zoom_font(14)
         mini_font = self.get_zoom_font(10)
 
-        top_h = 42
-        side_w = 48
-        screen_x = 12
-        screen_y = top_h + 8
-        screen_w = max(100, width - side_w - screen_x - 10)
-        screen_h = max(80, height - screen_y - 12)
+        top_h = 48
+        side_w = 58
+        padding = 14
+        screen_x = padding
+        screen_y = top_h + 10
+        screen_w = max(100, width - side_w - screen_x - 12)
+        screen_h = max(80, height - screen_y - 14)
 
         # Top emulator toolbar.
-        draw.rectangle((0, 0, width, top_h), fill="#f7f9fc")
-        draw.line((0, top_h - 1, width, top_h - 1), fill="#dce3ed")
+        draw.rectangle((0, 0, width, top_h), fill="#ffffff")
+        draw.line((0, top_h - 1, width, top_h - 1), fill="#d9e0ea")
         phone_name = self.phone_ids[self.selected_phone_index]
         title = f"{phone_name} (VM010036084034)  高速"
-        draw.text((14, 12), title, fill="#7c8492", font=title_font)
+        draw.text((16, 14), title, fill="#737d8c", font=title_font)
 
-        icon_y = 12
-        right_x = width - 170
-        self.draw_pin_icon(draw, right_x, icon_y + 2)
-        draw.text((right_x + 34, icon_y - 1), "-", fill="#98a1ad", font=title_font)
-        draw.rectangle((right_x + 66, icon_y + 2, right_x + 76, icon_y + 12), outline="#98a1ad", width=2)
-        draw.text((right_x + 100, icon_y - 1), "×", fill="#98a1ad", font=title_font)
-        draw.text((right_x + 136, icon_y - 1), "≪", fill="#98a1ad", font=title_font)
+        close_x1 = width - 48
+        close_y1 = 8
+        close_x2 = width - 14
+        close_y2 = 40
+        draw.rounded_rectangle((close_x1, close_y1, close_x2, close_y2), radius=8, fill="#f1f5f9")
+        draw.line((close_x1 + 11, close_y1 + 10, close_x2 - 11, close_y2 - 10), fill="#5f6b7a", width=3)
+        draw.line((close_x2 - 11, close_y1 + 10, close_x1 + 11, close_y2 - 10), fill="#5f6b7a", width=3)
+        draw.text((width - 86, 12), "—", fill="#8d98a7", font=title_font)
+        draw.rounded_rectangle((width - 124, 16, width - 110, 30), radius=3, outline="#8d98a7", width=2)
 
         # Main screen.
-        draw.rectangle(
-            (screen_x - 1, screen_y - 1, screen_x + screen_w + 1, screen_y + screen_h + 1),
-            fill="#2d3642",
+        draw.rounded_rectangle(
+            (screen_x - 3, screen_y - 3, screen_x + screen_w + 3, screen_y + screen_h + 3),
+            radius=6,
+            fill="#1f2933",
         )
         fitted = ImageOps.fit(content_image, (screen_w, screen_h), Image.LANCZOS)
         image.paste(fitted, (screen_x, screen_y))
 
         # Right toolbar.
         side_x = width - side_w
-        draw.rectangle((side_x, top_h, width, height), fill="#f8fafc")
-        draw.line((side_x, top_h, side_x, height), fill="#dce3ed")
+        draw.rounded_rectangle((side_x + 8, top_h + 10, width - 8, height - 14), radius=14, fill="#ffffff")
+        draw.line((side_x + 8, top_h + 26, side_x + 8, height - 30), fill="#e1e7ef")
 
-        self.draw_wifi_icon(draw, side_x + 24, top_h + 18)
-        draw.text((side_x + 14, top_h + 36), "0ms", fill="#19c37d", font=mini_font)
+        item_x = side_x + 29
+        self.draw_toolbar_circle(draw, item_x, top_h + 34, "#eafff4")
+        self.draw_wifi_icon(draw, item_x, top_h + 28)
+        draw.text((side_x + 18, top_h + 51), "0ms", fill="#18b873", font=mini_font)
 
-        self.draw_grid_icon(draw, side_x + 24, top_h + 74)
-        draw.text((side_x + 15, top_h + 94), "更多", fill="#9aa3ae", font=mini_font)
+        self.draw_toolbar_circle(draw, item_x, top_h + 94, "#f4f6f9")
+        self.draw_grid_icon(draw, item_x, top_h + 94)
+        draw.text((side_x + 17, top_h + 111), "更多", fill="#8e98a6", font=mini_font)
 
-        self.draw_back_icon(draw, side_x + 24, top_h + 136)
-        self.draw_home_icon(draw, side_x + 24, top_h + 184)
-        self.draw_recent_icon(draw, side_x + 24, top_h + 232)
+        self.draw_toolbar_circle(draw, item_x, top_h + 154, "#f4f6f9")
+        self.draw_back_icon(draw, item_x, top_h + 154)
+
+        self.draw_toolbar_circle(draw, item_x, top_h + 214, "#f4f6f9")
+        self.draw_home_icon(draw, item_x, top_h + 214)
+
+        self.draw_toolbar_circle(draw, item_x, top_h + 274, "#f4f6f9")
+        self.draw_recent_icon(draw, item_x, top_h + 274)
 
         return image
 
@@ -665,31 +685,34 @@ class CloudPhoneManager(tk.Tk):
         draw.line((x + 4, y + 8, x + 12, y + 16), fill="#a0a8b3", width=2)
         draw.line((x + 10, y + 10, x + 4, y + 18), fill="#a0a8b3", width=2)
 
+    def draw_toolbar_circle(self, draw, cx, cy, fill):
+        draw.ellipse((cx - 17, cy - 17, cx + 17, cy + 17), fill=fill)
+
     def draw_wifi_icon(self, draw, cx, cy):
         color = "#1fcf7a"
-        draw.arc((cx - 12, cy - 10, cx + 12, cy + 14), 220, 320, fill=color, width=3)
+        draw.arc((cx - 13, cy - 11, cx + 13, cy + 15), 220, 320, fill=color, width=3)
         draw.arc((cx - 8, cy - 6, cx + 8, cy + 10), 220, 320, fill=color, width=3)
-        draw.ellipse((cx - 2, cy + 4, cx + 2, cy + 8), fill=color)
+        draw.ellipse((cx - 3, cy + 5, cx + 3, cy + 11), fill=color)
 
     def draw_grid_icon(self, draw, cx, cy):
-        color = "#a1aab5"
+        color = "#8f9aaa"
         for row in range(2):
             for col in range(2):
-                x = cx - 9 + col * 12
-                y = cy - 9 + row * 12
-                draw.rounded_rectangle((x, y, x + 7, y + 7), radius=2, outline=color, width=2)
+                x = cx - 10 + col * 13
+                y = cy - 10 + row * 13
+                draw.rounded_rectangle((x, y, x + 8, y + 8), radius=2, outline=color, width=2)
 
     def draw_back_icon(self, draw, cx, cy):
-        color = "#a1aab5"
-        draw.line((cx + 8, cy - 9, cx - 8, cy, cx + 8, cy + 9), fill=color, width=4)
+        color = "#8f9aaa"
+        draw.line((cx + 9, cy - 10, cx - 9, cy, cx + 9, cy + 10), fill=color, width=4)
 
     def draw_home_icon(self, draw, cx, cy):
-        color = "#a1aab5"
-        draw.polygon([(cx - 10, cy), (cx, cy - 10), (cx + 10, cy), (cx + 7, cy), (cx + 7, cy + 10), (cx - 7, cy + 10), (cx - 7, cy)], fill=color)
+        color = "#8f9aaa"
+        draw.polygon([(cx - 12, cy), (cx, cy - 12), (cx + 12, cy), (cx + 8, cy), (cx + 8, cy + 11), (cx - 8, cy + 11), (cx - 8, cy)], fill=color)
 
     def draw_recent_icon(self, draw, cx, cy):
-        color = "#a1aab5"
-        draw.rounded_rectangle((cx - 9, cy - 9, cx + 9, cy + 9), radius=2, outline=color, width=3)
+        color = "#8f9aaa"
+        draw.rounded_rectangle((cx - 10, cy - 10, cx + 10, cy + 10), radius=3, outline=color, width=3)
 
     def show_progress_controls(self, duration, current_seconds=0):
         self.media_duration = max(1, int(duration))
