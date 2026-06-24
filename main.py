@@ -30,8 +30,15 @@ ID_ROW_HEIGHT = 22
 PROGRESS_WIDTH = 112
 PROGRESS_HEIGHT = 24
 SIDEBAR_WIDTH = 148
-VIDEO_TARGET_FPS = 12
-ZOOM_TARGET_FPS = 6
+VIDEO_TARGET_FPS = 6
+ZOOM_TARGET_FPS = 3
+CANVAS_X = SIDEBAR_WIDTH + 1
+CANVAS_WIDTH = 1160 - CANVAS_X
+CANVAS_HEIGHT = 650
+GRID_LEFT = 16
+GRID_TOP = 24
+GRID_COL_STEP = 245
+GRID_ROW_STEP = 148
 BASE_DIR = Path(getattr(sys, "_MEIPASS", Path(__file__).resolve().parent))
 WINDOWS_FONT_DIR = Path(os.environ.get("WINDIR", r"C:\Windows")) / "Fonts"
 WINDOWS_PIL_FONTS = [
@@ -61,7 +68,8 @@ class CloudPhoneManager(tk.Tk):
         self.id_row_images = []
         self.phone_current_images = []
         self.phone_image = self.make_phone_image()
-        self.audio_image = self.make_status_image("音频播放中")
+        self.audio_pil = self.make_status_pil("音频播放中")
+        self.audio_image = ImageTk.PhotoImage(self.audio_pil)
         self.device_icon_source = self.load_pil_icon("device.png")
         self.upload_icon_source = self.load_pil_icon("upload.png")
         self.video_capture = None
@@ -94,6 +102,11 @@ class CloudPhoneManager(tk.Tk):
         self.video_frame_count = 0
         self.last_zoom_update_at = 0
         self.last_progress_update_at = 0
+        self.current_content_pil = None
+        self.grid_base_image = None
+        self.grid_photo_image = None
+        self.grid_image_item = None
+        self.phone_canvas = None
 
         self.build_ui()
         self.show_all_phones()
@@ -106,7 +119,7 @@ class CloudPhoneManager(tk.Tk):
         image.put("#627083", to=(22, 80, 40, 100))
         return image
 
-    def make_status_image(self, text):
+    def make_status_pil(self, text):
         image = Image.new("RGB", (PHONE_WIDTH, PHONE_HEIGHT), CARD_COLOR)
         draw = ImageDraw.Draw(image)
         font = self.get_status_font()
@@ -114,7 +127,25 @@ class CloudPhoneManager(tk.Tk):
         x = (PHONE_WIDTH - (text_box[2] - text_box[0])) // 2
         y = (PHONE_HEIGHT - (text_box[3] - text_box[1])) // 2 - text_box[1]
         draw.text((x, y), text, fill="#d9dee7", font=font)
-        return ImageTk.PhotoImage(image)
+        return image
+
+    def make_status_image(self, text):
+        return ImageTk.PhotoImage(self.make_status_pil(text))
+
+    def make_phone_card_pil(self, number):
+        image = Image.new("RGB", (PHONE_WIDTH, PHONE_HEIGHT), CARD_COLOR)
+        draw = ImageDraw.Draw(image)
+        draw.rounded_rectangle((0, 0, PHONE_WIDTH - 1, PHONE_HEIGHT - 1), radius=2, fill=CARD_COLOR)
+        draw.rounded_rectangle((18, 15, 96, 25), radius=3, fill="#566477")
+        draw.rounded_rectangle((148, 78, 210, 87), radius=3, fill="#687689")
+        draw.rounded_rectangle((22, 80, 40, 100), radius=4, fill="#627083")
+        font = self.get_pil_font(15)
+        label = f"{number:02d}   Cloud Phone"
+        text_box = draw.textbbox((0, 0), label, font=font)
+        x = (PHONE_WIDTH - (text_box[2] - text_box[0])) // 2
+        y = (PHONE_HEIGHT - (text_box[3] - text_box[1])) // 2 - text_box[1]
+        draw.text((x, y), label, fill="#d9dee7", font=font)
+        return image
 
     def load_pil_icon(self, file_name):
         icon_path = BASE_DIR / "assets" / file_name
@@ -126,7 +157,7 @@ class CloudPhoneManager(tk.Tk):
         image = Image.new("RGBA", (ICON_SIZE, ICON_SIZE), (255, 255, 255, 0))
         return image
 
-    def make_id_row_image(self, phone_id):
+    def make_id_row_pil(self, phone_id):
         image = Image.new("RGBA", (ID_ROW_WIDTH, ID_ROW_HEIGHT), (255, 255, 255, 255))
         draw = ImageDraw.Draw(image)
         font = self.get_id_font()
@@ -143,7 +174,10 @@ class CloudPhoneManager(tk.Tk):
         upload_x = min(text_box[2] + 6, ID_ROW_WIDTH - ICON_SIZE)
         image.alpha_composite(self.upload_icon_source, (upload_x, icon_y))
 
-        return ImageTk.PhotoImage(image)
+        return image
+
+    def make_id_row_image(self, phone_id):
+        return ImageTk.PhotoImage(self.make_id_row_pil(phone_id))
 
     def get_pil_font(self, size):
         for path in WINDOWS_PIL_FONTS:
@@ -200,6 +234,17 @@ class CloudPhoneManager(tk.Tk):
         self.rename_entry.bind("<Escape>", lambda _event: self.hide_rename_entry())
 
         tk.Frame(self, bg="#dfe7f0").place(x=SIDEBAR_WIDTH, y=0, width=1, height=650)
+        self.phone_canvas = tk.Canvas(
+            self,
+            width=CANVAS_WIDTH,
+            height=CANVAS_HEIGHT,
+            bg="#f6f8fb",
+            bd=0,
+            highlightthickness=0,
+        )
+        self.phone_canvas.place(x=CANVAS_X, y=0, width=CANVAS_WIDTH, height=CANVAS_HEIGHT)
+        self.grid_image_item = self.phone_canvas.create_image(0, 0, anchor=tk.NW)
+        self.phone_canvas.bind("<Button-1>", self.on_phone_canvas_click)
         self.build_progress_controls()
 
     def build_progress_controls(self):
@@ -269,15 +314,48 @@ class CloudPhoneManager(tk.Tk):
 
     def show_all_phones(self):
         self.stop_video()
-        self.clear_phones()
-
-        for index, phone_id in enumerate(self.phone_ids):
-            row = index // 4
-            column = index % 4
-            x = 165 + column * 245
-            y = 24 + row * 148
-            self.create_phone(index + 1, phone_id, x, y)
+        self.current_content_pil = None
+        self.build_grid_base_image()
+        self.render_phone_grid()
         self.update_zoom_image_from_current()
+
+    def build_grid_base_image(self):
+        image = Image.new("RGB", (CANVAS_WIDTH, CANVAS_HEIGHT), "#f6f8fb")
+        for index, phone_id in enumerate(self.phone_ids):
+            x, y = self.get_phone_position(index)
+            id_row = self.make_id_row_pil(phone_id)
+            image.paste(id_row.convert("RGB"), (x, y + PHONE_HEIGHT + 2), id_row)
+        self.grid_base_image = image
+
+    def get_phone_position(self, index):
+        row = index // 4
+        column = index % 4
+        return GRID_LEFT + column * GRID_COL_STEP, GRID_TOP + row * GRID_ROW_STEP
+
+    def render_phone_grid(self, content_image=None):
+        if self.grid_base_image is None:
+            self.build_grid_base_image()
+
+        image = self.grid_base_image.copy()
+        for index in range(MAX_PHONES):
+            x, y = self.get_phone_position(index)
+            card = content_image if content_image is not None else self.make_phone_card_pil(index + 1)
+            image.paste(card, (x, y))
+
+        self.grid_photo_image = ImageTk.PhotoImage(image)
+        self.phone_canvas.itemconfig(self.grid_image_item, image=self.grid_photo_image)
+
+    def on_phone_canvas_click(self, event):
+        index = self.get_phone_index_at(event.x, event.y)
+        if index is not None:
+            self.open_zoom_window(index)
+
+    def get_phone_index_at(self, x, y):
+        for index in range(MAX_PHONES):
+            card_x, card_y = self.get_phone_position(index)
+            if card_x <= x <= card_x + PHONE_WIDTH and card_y <= y <= card_y + PHONE_HEIGHT:
+                return index
+        return None
 
     def clear_phones(self):
         for widget in self.phone_buttons + self.id_buttons:
@@ -390,11 +468,8 @@ class CloudPhoneManager(tk.Tk):
             self.video_skip_remainder = 0.0
 
         image = self.make_video_preview_image(frame)
-        self.video_frame_image = ImageTk.PhotoImage(image)
-
-        for button in self.phone_buttons:
-            button.config(image=self.video_frame_image, text="")
-        self.phone_current_images = [self.video_frame_image] * len(self.phone_buttons)
+        self.current_content_pil = image
+        self.render_phone_grid(self.current_content_pil)
         self.video_frame_count += 1
         if self.video_frame_count % 2 == 0:
             self.update_zoom_image_from_current(throttled=True)
@@ -491,10 +566,8 @@ class CloudPhoneManager(tk.Tk):
             return
 
         self.stop_video()
-        for button in self.phone_buttons:
-            button.config(image=self.audio_image, text="")
-        for index in range(len(self.phone_current_images)):
-            self.phone_current_images[index] = self.audio_image
+        self.current_content_pil = self.audio_pil
+        self.render_phone_grid(self.current_content_pil)
         self.update_zoom_image_from_current()
 
         self.audio_path = audio_path
@@ -590,11 +663,8 @@ class CloudPhoneManager(tk.Tk):
         self.hide_rename_entry()
 
     def refresh_id_rows(self):
-        self.id_row_images = []
-        for index, button in enumerate(self.id_buttons):
-            image = self.make_id_row_image(self.phone_ids[index])
-            button.config(image=image)
-            self.id_row_images.append(image)
+        self.build_grid_base_image()
+        self.render_phone_grid(self.current_content_pil)
 
     def open_zoom_window(self, index):
         self.selected_phone_index = index
@@ -647,7 +717,7 @@ class CloudPhoneManager(tk.Tk):
             return
         if self.zoom_window is None or not self.zoom_window.winfo_exists() or self.zoom_button is None:
             return
-        if self.selected_phone_index >= len(self.phone_current_images):
+        if self.selected_phone_index >= MAX_PHONES:
             return
         if throttled:
             now = time.perf_counter()
@@ -655,16 +725,15 @@ class CloudPhoneManager(tk.Tk):
                 return
             self.last_zoom_update_at = now
 
-        source = self.phone_current_images[self.selected_phone_index]
+        content_image = self.current_content_pil
+        if content_image is None:
+            content_image = self.make_phone_card_pil(self.selected_phone_index + 1)
+
         width = max(320, self.zoom_window.winfo_width())
         height = max(180, self.zoom_window.winfo_height())
-        try:
-            content_image = ImageTk.getimage(source).convert("RGB")
-            zoom_ui = self.make_zoom_window_image(content_image, width, height)
-            self.zoom_image = ImageTk.PhotoImage(zoom_ui)
-            self.zoom_button.config(image=self.zoom_image, text="")
-        except Exception:
-            self.zoom_button.config(image=source, text="")
+        zoom_ui = self.make_zoom_window_image(content_image.convert("RGB"), width, height)
+        self.zoom_image = ImageTk.PhotoImage(zoom_ui)
+        self.zoom_button.config(image=self.zoom_image, text="")
 
     def make_zoom_window_image(self, content_image, width, height):
         image = Image.new("RGB", (width, height), "#eef2f7")
