@@ -1,3 +1,4 @@
+import os
 import random
 import sys
 import threading
@@ -28,6 +29,16 @@ ID_ROW_HEIGHT = 22
 PROGRESS_WIDTH = 122
 PROGRESS_HEIGHT = 24
 BASE_DIR = Path(getattr(sys, "_MEIPASS", Path(__file__).resolve().parent))
+WINDOWS_FONT_DIR = Path(os.environ.get("WINDIR", r"C:\Windows")) / "Fonts"
+WINDOWS_PIL_FONTS = [
+    WINDOWS_FONT_DIR / "msyh.ttc",
+    WINDOWS_FONT_DIR / "msyhbd.ttc",
+    WINDOWS_FONT_DIR / "simhei.ttf",
+    WINDOWS_FONT_DIR / "segoeui.ttf",
+    WINDOWS_FONT_DIR / "arial.ttf",
+]
+TK_UI_FONT = "Microsoft YaHei UI"
+TK_LATIN_FONT = "Segoe UI"
 
 
 class CloudPhoneManager(tk.Tk):
@@ -124,33 +135,19 @@ class CloudPhoneManager(tk.Tk):
 
         return ImageTk.PhotoImage(image)
 
-    def get_id_font(self):
-        candidates = [
-            "/System/Library/Fonts/PingFang.ttc",
-            "/System/Library/Fonts/Supplemental/Arial.ttf",
-            "/Library/Fonts/Arial.ttf",
-            "arial.ttf",
-        ]
-        for path in candidates:
+    def get_pil_font(self, size):
+        for path in WINDOWS_PIL_FONTS:
             try:
-                return ImageFont.truetype(path, 11)
+                return ImageFont.truetype(str(path), size)
             except OSError:
                 continue
         return ImageFont.load_default()
 
+    def get_id_font(self):
+        return self.get_pil_font(11)
+
     def get_status_font(self):
-        candidates = [
-            "/System/Library/Fonts/PingFang.ttc",
-            "/System/Library/Fonts/Supplemental/Arial.ttf",
-            "/Library/Fonts/Arial.ttf",
-            "arial.ttf",
-        ]
-        for path in candidates:
-            try:
-                return ImageFont.truetype(path, 16)
-            except OSError:
-                continue
-        return ImageFont.load_default()
+        return self.get_pil_font(16)
 
     def build_ui(self):
         self.add_left_button("上传视频", 36, self.upload_video)
@@ -166,13 +163,13 @@ class CloudPhoneManager(tk.Tk):
         self.play_pause_button = tk.Button(
             self,
             text="暂停",
-            font=("Arial", 11),
+            font=(TK_UI_FONT, 11),
             command=self.toggle_pause,
         )
         self.progress_button = tk.Button(
             self,
             text="进度 0:00 / 0:00",
-            font=("Arial", 11),
+            font=(TK_UI_FONT, 11),
         )
         self.progress_bar_button = tk.Button(
             self,
@@ -191,7 +188,7 @@ class CloudPhoneManager(tk.Tk):
         button = tk.Button(
             self,
             text=text,
-            font=("Arial", 13),
+            font=(TK_UI_FONT, 13),
         )
         if command is not None:
             button.config(command=command)
@@ -219,13 +216,12 @@ class CloudPhoneManager(tk.Tk):
         self.phone_current_images = []
 
     def create_phone(self, number, phone_id, x, y):
-        # 使用 Button 作为云手机卡片，因为当前 Mac 环境里按钮控件已经确认可见。
         phone_button = tk.Button(
             self,
             text=f"{number:02d}   Cloud Phone",
             image=self.phone_image,
             compound=tk.CENTER,
-            font=("Arial", 15, "bold"),
+            font=(TK_LATIN_FONT, 15, "bold"),
             fg="#d9dee7",
             activeforeground="#ffffff",
             relief=tk.FLAT,
@@ -667,18 +663,7 @@ class CloudPhoneManager(tk.Tk):
         return image
 
     def get_zoom_font(self, size):
-        candidates = [
-            "/System/Library/Fonts/PingFang.ttc",
-            "/System/Library/Fonts/Supplemental/Arial.ttf",
-            "/Library/Fonts/Arial.ttf",
-            "arial.ttf",
-        ]
-        for path in candidates:
-            try:
-                return ImageFont.truetype(path, size)
-            except OSError:
-                continue
-        return ImageFont.load_default()
+        return self.get_pil_font(size)
 
     def draw_pin_icon(self, draw, x, y):
         draw.line((x + 7, y, x + 15, y + 8), fill="#a0a8b3", width=2)
@@ -830,6 +815,23 @@ class CloudPhoneManager(tk.Tk):
         super().destroy()
 
 
+def enable_windows_runtime_settings():
+    if sys.platform != "win32":
+        return
+
+    try:
+        import ctypes
+
+        try:
+            ctypes.windll.shcore.SetProcessDpiAwareness(1)
+        except Exception:
+            ctypes.windll.user32.SetProcessDPIAware()
+        ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID("CloudPhoneManager")
+    except Exception:
+        pass
+
+
 if __name__ == "__main__":
+    enable_windows_runtime_settings()
     app = CloudPhoneManager()
     app.mainloop()

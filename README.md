@@ -1,52 +1,46 @@
 # 云手机管理 Windows EXE 窗体程序
 
-这是一个最基础的云手机管理窗体程序，用 Python 自带的 Tkinter 写成。
+这是一个面向 Windows 打包的 Tkinter 桌面程序，主程序是 `main.py`，打包后输出 `dist\CloudPhoneManager.exe`。
 
-界面效果：
+## 功能
 
-- 白色软件背景
-- 4x4 共 16 个云手机窗口
-- 小窗口颜色为 `#4a576a`
-- 每个小窗口下面显示一个灰色模拟器编号
-- 编号长度一样，并且连续递增
+- 白色主窗口，固定 4x4 共 16 个云手机卡片
+- 支持上传视频并同步播放到所有云手机卡片
+- 支持上传音频、暂停/继续、拖动进度
+- 支持批量选择素材、批量改名
+- 点击云手机可打开独立放大窗口
 
-## 在 Mac 上预览
+## Windows 本地打包
 
-```bash
-cd /Users/mac/windows_exe_demo
-python3 main.py
-```
-
-如果能看到窗口、输入名字、点击按钮，就说明程序逻辑正常。
-
-## 在 Windows 上本地打包
-
-进入项目目录后双击：
+在 Windows 电脑安装 Python 3.12 或 3.11 后，双击项目里的：
 
 ```text
 build_windows.bat
 ```
 
-打包完成后，exe 在：
+打包完成后文件在：
 
 ```text
 dist\CloudPhoneManager.exe
 ```
 
-## 用 GitHub Actions 自动打包 Windows exe
+也可以在命令行执行：
 
-1. 把这个项目上传到 GitHub。
-2. 进入 GitHub 仓库的 `Actions` 页面。
-3. 选择 `Build Windows EXE`。
-4. 点击 `Run workflow`。
-5. 等执行完成后，在页面底部下载 `CloudPhoneManager-windows-exe`。
-
-## 修改窗口内容
-
-主要改这个文件：
-
-```text
-main.py
+```bat
+python -m pip install -r requirements.txt
+python -m PyInstaller --clean --noconfirm CloudPhoneManager.spec
 ```
 
-可以改标题、按钮文字、窗口大小、点击后的提示内容。
+## GitHub Actions 打包
+
+把项目上传到 GitHub 后，可在 Actions 里手动运行 `Build Windows EXE`，完成后下载 artifact：
+
+```text
+CloudPhoneManager-windows-exe
+```
+
+## 说明
+
+- `CloudPhoneManager.spec` 是 Windows EXE 打包配置，不包含其他平台应用包配置。
+- `windows_app.manifest` 用于启用 Windows 常用控件、DPI 感知和普通用户权限启动。
+- Windows EXE 需要在 Windows 环境打包生成。

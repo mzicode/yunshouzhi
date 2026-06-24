@@ -30,7 +30,7 @@ jobs:
 
       - name: Build exe
         run: |
-          python -m PyInstaller --onefile --windowed --name CloudPhoneManager --add-data "assets;assets" main.py
+          python -m PyInstaller --clean --noconfirm CloudPhoneManager.spec
 
       - name: Upload exe
         uses: actions/upload-artifact@v4
