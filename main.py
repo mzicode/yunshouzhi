@@ -2,6 +2,7 @@ import os
 import random
 import sys
 import threading
+import time
 import tkinter as tk
 from tkinter import filedialog, messagebox
 from pathlib import Path
@@ -26,8 +27,11 @@ PHONE_HEIGHT = 110
 ICON_SIZE = 14
 ID_ROW_WIDTH = 170
 ID_ROW_HEIGHT = 22
-PROGRESS_WIDTH = 122
+PROGRESS_WIDTH = 112
 PROGRESS_HEIGHT = 24
+SIDEBAR_WIDTH = 148
+VIDEO_TARGET_FPS = 12
+ZOOM_TARGET_FPS = 6
 BASE_DIR = Path(getattr(sys, "_MEIPASS", Path(__file__).resolve().parent))
 WINDOWS_FONT_DIR = Path(os.environ.get("WINDIR", r"C:\Windows")) / "Fonts"
 WINDOWS_PIL_FONTS = [
@@ -48,7 +52,7 @@ class CloudPhoneManager(tk.Tk):
         self.title("红手指")
         self.geometry("1160x650")
         self.resizable(False, False)
-        self.configure(bg="white")
+        self.configure(bg="#f6f8fb")
 
         start_id = random.randint(73000000, 86000000)
         self.phone_ids = [str(start_id + index) for index in range(MAX_PHONES)]
@@ -64,6 +68,9 @@ class CloudPhoneManager(tk.Tk):
         self.video_after_id = None
         self.video_frame_image = None
         self.video_fps = 25
+        self.video_source_fps = 25
+        self.video_frame_step = 1.0
+        self.video_skip_remainder = 0.0
         self.video_path = None
         self.video_start_seconds = 0
         self.media_duration = 0
@@ -84,6 +91,9 @@ class CloudPhoneManager(tk.Tk):
         self.zoom_window = None
         self.zoom_button = None
         self.zoom_image = None
+        self.video_frame_count = 0
+        self.last_zoom_update_at = 0
+        self.last_progress_update_at = 0
 
         self.build_ui()
         self.show_all_phones()
@@ -150,49 +160,111 @@ class CloudPhoneManager(tk.Tk):
         return self.get_pil_font(16)
 
     def build_ui(self):
-        self.add_left_button("上传视频", 36, self.upload_video)
-        self.add_left_button("上传语音", 94, self.upload_audio)
-        self.add_left_button("批量素材", 152, self.batch_upload_materials)
-        self.name_input_button = self.add_left_button("名称: 请输入", 226, self.start_rename_input)
-        self.name_input_button.place_forget()
-        self.add_left_button("批量改名", 226, self.batch_rename)
-        self.bind_all("<Key>", self.on_rename_key)
+        self.sidebar = tk.Frame(self, bg="#eef3f8")
+        self.sidebar.place(x=0, y=0, width=SIDEBAR_WIDTH, height=650)
+
+        tk.Label(
+            self.sidebar,
+            text="红手指",
+            bg="#eef3f8",
+            fg="#1f2937",
+            font=(TK_UI_FONT, 16, "bold"),
+        ).place(x=20, y=18, width=108, height=26)
+        tk.Label(
+            self.sidebar,
+            text="素材控制台",
+            bg="#eef3f8",
+            fg="#7b8794",
+            font=(TK_UI_FONT, 9),
+        ).place(x=20, y=45, width=108, height=18)
+
+        self.add_left_button("上传视频", 82, self.upload_video, primary=True)
+        self.add_left_button("上传语音", 132, self.upload_audio)
+        self.add_left_button("批量素材", 182, self.batch_upload_materials)
+        self.rename_button = self.add_left_button("批量改名", 250, self.batch_rename)
+
+        self.rename_entry = tk.Entry(
+            self.sidebar,
+            font=(TK_UI_FONT, 11),
+            relief=tk.FLAT,
+            bd=0,
+            bg="#ffffff",
+            fg="#1f2937",
+            insertbackground="#2563eb",
+            highlightthickness=1,
+            highlightcolor="#60a5fa",
+            highlightbackground="#cfd8e3",
+            justify="center",
+        )
+        self.rename_entry.bind("<Return>", lambda _event: self.batch_rename())
+        self.rename_entry.bind("<Escape>", lambda _event: self.hide_rename_entry())
+
+        tk.Frame(self, bg="#dfe7f0").place(x=SIDEBAR_WIDTH, y=0, width=1, height=650)
         self.build_progress_controls()
 
     def build_progress_controls(self):
-        self.play_pause_button = tk.Button(
-            self,
-            text="暂停",
-            font=(TK_UI_FONT, 11),
-            command=self.toggle_pause,
+        self.play_pause_button = self.make_sidebar_button(
+            self.sidebar,
+            "暂停",
+            self.toggle_pause,
+            bg="#ffffff",
+            fg="#1f2937",
+            active_bg="#e8eef6",
         )
-        self.progress_button = tk.Button(
-            self,
+        self.progress_button = tk.Label(
+            self.sidebar,
             text="进度 0:00 / 0:00",
-            font=(TK_UI_FONT, 11),
+            font=(TK_UI_FONT, 9),
+            bg="#eef3f8",
+            fg="#687385",
         )
         self.progress_bar_button = tk.Button(
-            self,
+            self.sidebar,
             relief=tk.FLAT,
             bd=0,
             padx=0,
             pady=0,
+            bg="#eef3f8",
+            activebackground="#eef3f8",
             highlightthickness=0,
             takefocus=0,
+            cursor="hand2",
         )
         self.progress_bar_button.bind("<ButtonPress-1>", self.on_progress_press)
         self.progress_bar_button.bind("<B1-Motion>", self.on_progress_drag)
         self.progress_bar_button.bind("<ButtonRelease-1>", self.on_progress_release)
 
-    def add_left_button(self, text, y, command):
+    def make_sidebar_button(self, parent, text, command, bg="#ffffff", fg="#334155", active_bg="#e8eef6"):
         button = tk.Button(
-            self,
+            parent,
             text=text,
-            font=(TK_UI_FONT, 13),
+            font=(TK_UI_FONT, 11, "bold"),
+            bg=bg,
+            fg=fg,
+            activebackground=active_bg,
+            activeforeground=fg,
+            relief=tk.FLAT,
+            bd=0,
+            padx=0,
+            pady=0,
+            cursor="hand2",
+            highlightthickness=1,
+            highlightbackground="#dbe3ee",
         )
         if command is not None:
             button.config(command=command)
-        button.place(x=22, y=y, width=106, height=28)
+        return button
+
+    def add_left_button(self, text, y, command, primary=False):
+        button = self.make_sidebar_button(
+            self.sidebar,
+            text,
+            command,
+            bg="#2563eb" if primary else "#ffffff",
+            fg="#ffffff" if primary else "#334155",
+            active_bg="#1d4ed8" if primary else "#e8eef6",
+        )
+        button.place(x=18, y=y, width=112, height=36)
         return button
 
     def show_all_phones(self):
@@ -277,6 +349,7 @@ class CloudPhoneManager(tk.Tk):
     def start_video(self, video_path, start_seconds=0):
         self.stop_video()
         capture = cv2.VideoCapture(video_path)
+        capture.set(cv2.CAP_PROP_BUFFERSIZE, 1)
         if not capture.isOpened():
             messagebox.showerror("打开失败", "这个视频文件无法打开。")
             return
@@ -288,11 +361,16 @@ class CloudPhoneManager(tk.Tk):
             capture.set(cv2.CAP_PROP_POS_MSEC, start_seconds * 1000)
 
         self.video_capture = capture
-        self.video_fps = fps if fps and fps > 1 else 25
+        source_fps = fps if fps and fps > 1 else 25
+        self.video_source_fps = source_fps
+        self.video_fps = min(VIDEO_TARGET_FPS, source_fps)
+        self.video_frame_step = max(1.0, self.video_source_fps / max(1, self.video_fps))
+        self.video_skip_remainder = 0.0
         self.video_start_seconds = start_seconds
         self.media_kind = "video"
         self.media_duration = int(duration) if duration else 0
         self.is_paused = False
+        self.video_frame_count = 0
         self.show_progress_controls(self.media_duration, start_seconds)
         self.play_next_video_frame()
 
@@ -309,22 +387,50 @@ class CloudPhoneManager(tk.Tk):
             if not ok:
                 self.stop_video()
                 return
+            self.video_skip_remainder = 0.0
 
-        frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-        image = Image.fromarray(frame)
-        image = ImageOps.fit(image, (PHONE_WIDTH, PHONE_HEIGHT), Image.LANCZOS)
+        image = self.make_video_preview_image(frame)
         self.video_frame_image = ImageTk.PhotoImage(image)
 
-        for index, button in enumerate(self.phone_buttons):
+        for button in self.phone_buttons:
             button.config(image=self.video_frame_image, text="")
-            self.phone_current_images[index] = self.video_frame_image
-        self.update_zoom_image_from_current()
+        self.phone_current_images = [self.video_frame_image] * len(self.phone_buttons)
+        self.video_frame_count += 1
+        if self.video_frame_count % 2 == 0:
+            self.update_zoom_image_from_current(throttled=True)
+
+        self.skip_video_frames_for_realtime()
 
         current_seconds = int(self.video_capture.get(cv2.CAP_PROP_POS_MSEC) / 1000)
-        self.update_progress_value(current_seconds)
+        self.update_progress_value(current_seconds, throttled=True)
 
-        delay = max(15, int(1000 / self.video_fps))
+        delay = max(60, int(1000 / self.video_fps))
         self.video_after_id = self.after(delay, self.play_next_video_frame)
+
+    def skip_video_frames_for_realtime(self):
+        skip_float = self.video_frame_step - 1 + self.video_skip_remainder
+        skip_count = int(skip_float)
+        self.video_skip_remainder = skip_float - skip_count
+        for _ in range(skip_count):
+            if self.video_capture is None or not self.video_capture.grab():
+                break
+
+    def make_video_preview_image(self, frame):
+        h, w = frame.shape[:2]
+        target_ratio = PHONE_WIDTH / PHONE_HEIGHT
+        frame_ratio = w / h if h else target_ratio
+        if frame_ratio > target_ratio:
+            crop_w = int(h * target_ratio)
+            x1 = max(0, (w - crop_w) // 2)
+            frame = frame[:, x1:x1 + crop_w]
+        else:
+            crop_h = int(w / target_ratio) if target_ratio else h
+            y1 = max(0, (h - crop_h) // 2)
+            frame = frame[y1:y1 + crop_h, :]
+
+        frame = cv2.resize(frame, (PHONE_WIDTH, PHONE_HEIGHT), interpolation=cv2.INTER_AREA)
+        frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+        return Image.fromarray(frame)
 
     def stop_video(self):
         if self.video_after_id is not None:
@@ -456,74 +562,32 @@ class CloudPhoneManager(tk.Tk):
         messagebox.showinfo("批量素材", f"已选择 {len(self.material_paths)} 个素材。")
 
     def start_rename_input(self):
-        self.rename_text = ""
-        self.rename_editing = True
-        self.update_name_input_button()
-        self.focus_force()
+        self.rename_input_visible = True
+        self.rename_entry.delete(0, tk.END)
+        self.rename_entry.place(x=18, y=294, width=112, height=34)
+        self.rename_entry.focus_set()
+        self.rename_button.config(text="确认改名", bg="#16a34a", fg="#ffffff", activebackground="#15803d")
 
-    def paste_rename_text(self):
-        try:
-            value = self.clipboard_get().strip()
-        except tk.TclError:
-            value = ""
-        if not value:
-            messagebox.showinfo("提示", "剪贴板里没有可用名称。")
-            return
-        self.rename_text = value[:20]
-        self.rename_editing = False
-        self.update_name_input_button()
-
-    def on_rename_key(self, event):
-        if not self.rename_editing:
-            return
-
-        if event.keysym in ("Return", "KP_Enter"):
-            self.rename_editing = False
-            self.update_name_input_button()
-            return "break"
-        if event.keysym == "Escape":
-            self.rename_editing = False
-            self.update_name_input_button()
-            return "break"
-        if event.keysym == "BackSpace":
-            self.rename_text = self.rename_text[:-1]
-            self.update_name_input_button()
-            return "break"
-
-        if event.char and event.char.isprintable():
-            self.rename_text = (self.rename_text + event.char)[:20]
-            self.update_name_input_button()
-            return "break"
-
-        return None
-
-    def update_name_input_button(self):
-        value = self.rename_text or "请输入"
-        if len(value) > 6:
-            value = value[:6] + "..."
-        prefix = "输入中:" if self.rename_editing else "名称:"
-        self.name_input_button.config(text=f"{prefix} {value}")
+    def hide_rename_entry(self):
+        self.rename_input_visible = False
+        self.rename_entry.place_forget()
+        self.rename_button.config(text="批量改名", bg="#ffffff", fg="#334155", activebackground="#e8eef6")
 
     def batch_rename(self):
         if not self.rename_input_visible:
-            self.rename_input_visible = True
-            self.name_input_button.place(x=22, y=284, width=106, height=28)
             self.start_rename_input()
             return
 
-        name = self.rename_text.strip()
+        name = self.rename_entry.get().strip()
         if not name:
             messagebox.showinfo("提示", "请先输入要修改的名称。")
-            self.start_rename_input()
+            self.rename_entry.focus_set()
             return
 
-        self.rename_text = name
-        self.rename_editing = False
-        self.update_name_input_button()
-        self.phone_ids = [name for _ in range(MAX_PHONES)]
+        self.rename_text = name[:20]
+        self.phone_ids = [self.rename_text for _ in range(MAX_PHONES)]
         self.refresh_id_rows()
-        self.rename_input_visible = False
-        self.name_input_button.place_forget()
+        self.hide_rename_entry()
 
     def refresh_id_rows(self):
         self.id_row_images = []
@@ -578,13 +642,18 @@ class CloudPhoneManager(tk.Tk):
         if event.y <= 48 and width - 52 <= event.x <= width - 12:
             self.close_zoom_window()
 
-    def update_zoom_image_from_current(self):
+    def update_zoom_image_from_current(self, throttled=False):
         if self.selected_phone_index is None:
             return
         if self.zoom_window is None or not self.zoom_window.winfo_exists() or self.zoom_button is None:
             return
         if self.selected_phone_index >= len(self.phone_current_images):
             return
+        if throttled:
+            now = time.perf_counter()
+            if now - self.last_zoom_update_at < 1 / ZOOM_TARGET_FPS:
+                return
+            self.last_zoom_update_at = now
 
         source = self.phone_current_images[self.selected_phone_index]
         width = max(320, self.zoom_window.winfo_width())
@@ -705,9 +774,9 @@ class CloudPhoneManager(tk.Tk):
         self.update_progress_text(self.current_progress_seconds)
         self.update_progress_bar_image(self.current_progress_seconds)
         self.play_pause_button.config(text="暂停")
-        self.play_pause_button.place(x=22, y=438, width=106, height=28)
-        self.progress_button.place(x=22, y=474, width=106, height=28)
-        self.progress_bar_button.place(x=14, y=512, width=PROGRESS_WIDTH, height=PROGRESS_HEIGHT)
+        self.play_pause_button.place(x=18, y=404, width=112, height=34)
+        self.progress_button.place(x=18, y=446, width=112, height=22)
+        self.progress_bar_button.place(x=18, y=474, width=PROGRESS_WIDTH, height=PROGRESS_HEIGHT)
 
     def toggle_pause(self):
         if self.media_kind is None:
@@ -766,9 +835,14 @@ class CloudPhoneManager(tk.Tk):
             thread = threading.Thread(target=self.play_audio_file, args=(self.audio_path,), daemon=True)
             thread.start()
 
-    def update_progress_value(self, seconds):
+    def update_progress_value(self, seconds, throttled=False):
         if self.is_dragging_progress:
             return
+        if throttled:
+            now = time.perf_counter()
+            if now - self.last_progress_update_at < 0.25:
+                return
+            self.last_progress_update_at = now
         if self.media_duration:
             seconds = min(seconds, self.media_duration)
         self.current_progress_seconds = max(0, int(seconds))
@@ -785,7 +859,7 @@ class CloudPhoneManager(tk.Tk):
         fill_width = int(PROGRESS_WIDTH * ratio)
         knob_x = max(6, min(PROGRESS_WIDTH - 6, fill_width))
 
-        image = Image.new("RGB", (PROGRESS_WIDTH, PROGRESS_HEIGHT), "white")
+        image = Image.new("RGB", (PROGRESS_WIDTH, PROGRESS_HEIGHT), "#eef3f8")
         draw = ImageDraw.Draw(image)
         track_y = PROGRESS_HEIGHT // 2
         draw.rounded_rectangle((0, track_y - 4, PROGRESS_WIDTH, track_y + 4), radius=4, fill="#e5e7eb")
