@@ -58,7 +58,8 @@ class CloudPhoneManager(tk.Tk):
 
         self.title("红手指")
         self.geometry("1160x650")
-        self.resizable(False, False)
+        self.minsize(1160, 650)
+        self.resizable(True, True)
         self.configure(bg="#f6f8fb")
 
         start_id = random.randint(73000000, 86000000)
@@ -108,9 +109,20 @@ class CloudPhoneManager(tk.Tk):
         self.grid_photo_image = None
         self.grid_image_item = None
         self.phone_canvas = None
+        self.phone_videos = [None] * MAX_PHONES
+        self.phone_captures = {}
+        self.phone_after_ids = {}
+        self.phone_preview_frames = {}
+        self.phone_zoom_frames = {}
+        self.phone_video_fps = {}
+        self.phone_video_step = {}
+        self.phone_skip_remainder = {}
+        self.phone_start_seconds = {}
+        self._last_main_size = None
 
         self.build_ui()
         self.show_all_phones()
+        self.bind("<Configure>", self.on_main_configure)
 
     def make_phone_image(self):
         image = tk.PhotoImage(width=PHONE_WIDTH, height=PHONE_HEIGHT)
@@ -216,7 +228,8 @@ class CloudPhoneManager(tk.Tk):
         self.add_left_button("上传视频", 82, self.upload_video, primary=True)
         self.add_left_button("上传语音", 132, self.upload_audio)
         self.add_left_button("批量素材", 182, self.batch_upload_materials)
-        self.rename_button = self.add_left_button("批量改名", 250, self.batch_rename)
+        self.rename_button = self.add_left_button("批量改名", 232, self.batch_rename)
+        self.script_button = self.add_left_button("修改话术", 282, self.open_script_dialog)
 
         self.rename_entry = tk.Entry(
             self.sidebar,
@@ -234,7 +247,8 @@ class CloudPhoneManager(tk.Tk):
         self.rename_entry.bind("<Return>", lambda _event: self.batch_rename())
         self.rename_entry.bind("<Escape>", lambda _event: self.hide_rename_entry())
 
-        tk.Frame(self, bg="#dfe7f0").place(x=SIDEBAR_WIDTH, y=0, width=1, height=650)
+        self.divider = tk.Frame(self, bg="#dfe7f0")
+        self.divider.place(x=SIDEBAR_WIDTH, y=0, width=1, height=650)
         self.phone_canvas = tk.Canvas(
             self,
             width=CANVAS_WIDTH,
@@ -313,6 +327,19 @@ class CloudPhoneManager(tk.Tk):
         button.place(x=18, y=y, width=112, height=36)
         return button
 
+    def on_main_configure(self, event):
+        if event.widget is not self:
+            return
+        width, height = event.width, event.height
+        if (width, height) == self._last_main_size:
+            return
+        self._last_main_size = (width, height)
+        self.sidebar.place(x=0, y=0, width=SIDEBAR_WIDTH, height=height)
+        self.divider.place(x=SIDEBAR_WIDTH, y=0, width=1, height=height)
+        canvas_width = max(CANVAS_WIDTH, width - CANVAS_X)
+        canvas_height = max(CANVAS_HEIGHT, height)
+        self.phone_canvas.place(x=CANVAS_X, y=0, width=canvas_width, height=canvas_height)
+
     def show_all_phones(self):
         self.stop_video()
         self.current_content_pil = None
@@ -341,7 +368,14 @@ class CloudPhoneManager(tk.Tk):
         image = self.grid_base_image.copy()
         for index in range(MAX_PHONES):
             x, y = self.get_phone_position(index)
-            card = content_image if content_image is not None else self.make_phone_card_pil(index + 1)
+            if index in self.phone_preview_frames:
+                card = self.phone_preview_frames[index]
+            elif content_image is not None:
+                card = content_image
+            elif self.current_content_pil is not None:
+                card = self.current_content_pil
+            else:
+                card = self.make_phone_card_pil(index + 1)
             image.paste(card, (x, y))
 
         self.grid_photo_image = ImageTk.PhotoImage(image)
@@ -529,6 +563,89 @@ class CloudPhoneManager(tk.Tk):
             self.video_capture.release()
             self.video_capture = None
 
+    def set_phone_video(self, index, video_path, start_seconds=0):
+        if cv2 is None:
+            messagebox.showerror("缺少依赖", "需要先安装 opencv-python 才能播放视频。")
+            return
+        self.stop_phone_video(index)
+
+        capture = cv2.VideoCapture(video_path)
+        capture.set(cv2.CAP_PROP_BUFFERSIZE, 1)
+        if not capture.isOpened():
+            messagebox.showerror("打开失败", "这个视频文件无法打开。")
+            return
+
+        fps = capture.get(cv2.CAP_PROP_FPS)
+        source_fps = fps if fps and fps > 1 else 25
+        target_fps = min(VIDEO_TARGET_FPS, source_fps)
+
+        self.phone_videos[index] = video_path
+        self.phone_captures[index] = capture
+        self.phone_video_fps[index] = target_fps
+        self.phone_video_step[index] = max(1.0, source_fps / max(1, target_fps))
+        self.phone_skip_remainder[index] = 0.0
+        self.phone_start_seconds[index] = start_seconds
+        if start_seconds > 0:
+            capture.set(cv2.CAP_PROP_POS_MSEC, start_seconds * 1000)
+
+        self.play_next_phone_frame(index)
+
+    def play_next_phone_frame(self, index):
+        capture = self.phone_captures.get(index)
+        if capture is None:
+            return
+
+        ok, frame = capture.read()
+        if not ok:
+            start_seconds = self.phone_start_seconds.get(index, 0)
+            capture.set(cv2.CAP_PROP_POS_MSEC, start_seconds * 1000)
+            ok, frame = capture.read()
+            if not ok:
+                self.stop_phone_video(index)
+                return
+            self.phone_skip_remainder[index] = 0.0
+
+        self.phone_preview_frames[index] = self.make_video_preview_image(frame)
+        self.phone_zoom_frames[index] = self.make_video_zoom_image(frame)
+        self.render_phone_grid()
+        if self.selected_phone_index == index:
+            self.update_zoom_image_from_current()
+
+        skip_float = self.phone_video_step.get(index, 1.0) - 1 + self.phone_skip_remainder.get(index, 0.0)
+        skip_count = int(skip_float)
+        self.phone_skip_remainder[index] = skip_float - skip_count
+        for _ in range(skip_count):
+            if capture is None or not capture.grab():
+                break
+
+        delay = max(60, int(1000 / self.phone_video_fps.get(index, VIDEO_TARGET_FPS)))
+        self.phone_after_ids[index] = self.after(delay, lambda idx=index: self.play_next_phone_frame(idx))
+
+    def stop_phone_video(self, index):
+        after_id = self.phone_after_ids.pop(index, None)
+        if after_id is not None:
+            self.after_cancel(after_id)
+        capture = self.phone_captures.pop(index, None)
+        if capture is not None:
+            capture.release()
+
+    def replace_phone_video(self, index):
+        if index is None:
+            return
+        if cv2 is None:
+            messagebox.showerror("缺少依赖", "需要先安装 opencv-python 才能播放视频。")
+            return
+        video_path = filedialog.askopenfilename(
+            title=f"更换云手机 {index + 1} 的视频",
+            filetypes=[
+                ("视频文件", "*.mp4 *.mov *.avi *.mkv *.webm"),
+                ("所有文件", "*.*"),
+            ],
+        )
+        if not video_path:
+            return
+        self.set_phone_video(index, video_path)
+
     def get_start_seconds_from_entry(self):
         return 0
 
@@ -652,7 +769,7 @@ class CloudPhoneManager(tk.Tk):
     def start_rename_input(self):
         self.rename_input_visible = True
         self.rename_entry.delete(0, tk.END)
-        self.rename_entry.place(x=18, y=294, width=112, height=34)
+        self.rename_entry.place(x=18, y=332, width=112, height=34)
         self.rename_entry.focus_set()
         self.rename_button.config(text="确认改名", bg="#16a34a", fg="#ffffff", activebackground="#15803d")
 
@@ -680,6 +797,99 @@ class CloudPhoneManager(tk.Tk):
     def refresh_id_rows(self):
         self.build_grid_base_image()
         self.render_phone_grid(self.current_content_pil)
+
+    def open_script_dialog(self):
+        dialog = tk.Toplevel(self)
+        dialog.title("修改话术")
+        dialog.configure(bg="#ffffff")
+        dialog.resizable(False, False)
+        dialog.transient(self)
+        dialog.grab_set()
+        dialog.geometry("380x240")
+
+        header = tk.Frame(dialog, bg="#2563eb")
+        header.pack(fill=tk.X)
+        tk.Label(
+            header,
+            text="修改话术",
+            bg="#2563eb",
+            fg="#ffffff",
+            font=(TK_UI_FONT, 13, "bold"),
+        ).pack(anchor=tk.W, padx=16, pady=12)
+
+        body = tk.Frame(dialog, bg="#ffffff")
+        body.pack(fill=tk.BOTH, expand=True, padx=16, pady=12)
+
+        tk.Label(
+            body,
+            text="请输入新的话术内容：",
+            bg="#ffffff",
+            fg="#334155",
+            font=(TK_UI_FONT, 10),
+        ).pack(anchor=tk.W)
+
+        entry = tk.Text(
+            body,
+            height=4,
+            font=(TK_UI_FONT, 11),
+            relief=tk.FLAT,
+            bd=0,
+            bg="#f5f8fc",
+            fg="#1f2937",
+            insertbackground="#2563eb",
+            padx=8,
+            pady=6,
+            wrap=tk.WORD,
+            highlightthickness=1,
+            highlightcolor="#60a5fa",
+            highlightbackground="#cfd8e3",
+        )
+        entry.pack(fill=tk.X, pady=(8, 12))
+
+        buttons = tk.Frame(body, bg="#ffffff")
+        buttons.pack(fill=tk.X)
+
+        cancel_button = tk.Button(
+            buttons,
+            text="取消",
+            command=dialog.destroy,
+            font=(TK_UI_FONT, 10),
+            bg="#eef3f8",
+            fg="#334155",
+            activebackground="#e0e8f2",
+            activeforeground="#334155",
+            relief=tk.FLAT,
+            bd=0,
+            width=10,
+            pady=6,
+            cursor="hand2",
+        )
+        cancel_button.pack(side=tk.RIGHT, padx=(8, 0))
+
+        ok_button = tk.Button(
+            buttons,
+            text="确定",
+            command=dialog.destroy,
+            font=(TK_UI_FONT, 10, "bold"),
+            bg="#2563eb",
+            fg="#ffffff",
+            activebackground="#1d4ed8",
+            activeforeground="#ffffff",
+            relief=tk.FLAT,
+            bd=0,
+            width=10,
+            pady=6,
+            cursor="hand2",
+        )
+        ok_button.pack(side=tk.RIGHT)
+
+        dialog.update_idletasks()
+        pos_x = self.winfo_x() + (self.winfo_width() - dialog.winfo_width()) // 2
+        pos_y = self.winfo_y() + (self.winfo_height() - dialog.winfo_height()) // 2
+        dialog.geometry(f"+{max(0, pos_x)}+{max(0, pos_y)}")
+
+        entry.focus_set()
+        dialog.bind("<Escape>", lambda _event: dialog.destroy())
 
     def open_zoom_window(self, index):
         self.selected_phone_index = index
@@ -724,8 +934,27 @@ class CloudPhoneManager(tk.Tk):
             return
 
         width = max(320, self.zoom_window.winfo_width())
-        if event.y <= 48 and width - 52 <= event.x <= width - 12:
-            self.close_zoom_window()
+        height = max(180, self.zoom_window.winfo_height())
+
+        # 顶部窗口控制条
+        if event.y <= 48:
+            if width - 52 <= event.x <= width - 12:
+                self.close_zoom_window()
+            return
+
+        # 播放画面区域本身不算控件，忽略
+        side_w = 76
+        top_h = 58
+        padding = 18
+        screen_x = padding
+        screen_y = top_h + 16
+        screen_w = max(160, width - side_w - screen_x - 18)
+        screen_h = max(110, height - screen_y - 44)
+        if screen_x <= event.x <= screen_x + screen_w and screen_y <= event.y <= screen_y + screen_h:
+            return
+
+        # 播放窗体下方/右侧的任意控件 → 弹窗更换该云手机的视频
+        self.replace_phone_video(self.selected_phone_index)
 
     def update_zoom_image_from_current(self, throttled=False):
         if self.selected_phone_index is None:
@@ -740,9 +969,13 @@ class CloudPhoneManager(tk.Tk):
                 return
             self.last_zoom_update_at = now
 
-        content_image = self.current_zoom_content_pil or self.current_content_pil
+        index = self.selected_phone_index
+        if index in self.phone_zoom_frames:
+            content_image = self.phone_zoom_frames[index]
+        else:
+            content_image = self.current_zoom_content_pil or self.current_content_pil
         if content_image is None:
-            content_image = self.make_phone_card_pil(self.selected_phone_index + 1)
+            content_image = self.make_phone_card_pil(index + 1)
 
         width = max(320, self.zoom_window.winfo_width())
         height = max(180, self.zoom_window.winfo_height())
@@ -993,6 +1226,8 @@ class CloudPhoneManager(tk.Tk):
 
     def destroy(self):
         self.stop_video()
+        for index in list(self.phone_captures.keys()):
+            self.stop_phone_video(index)
         if self.progress_after_id is not None:
             self.after_cancel(self.progress_after_id)
             self.progress_after_id = None
