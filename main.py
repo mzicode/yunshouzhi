@@ -116,6 +116,8 @@ class CloudPhoneManager(tk.Tk):
         self.grid_scale = 1.0
         self.grid_offset_x = 0
         self.grid_offset_y = 0
+        self.grid_gap_x = GRID_COL_STEP - PHONE_WIDTH
+        self.grid_gap_y = GRID_ROW_STEP - (PHONE_HEIGHT + 2 + ID_ROW_HEIGHT)
         self._grid_resize_after_id = None
         self.phone_canvas = None
         self.phone_videos = [None] * MAX_PHONES
@@ -392,35 +394,59 @@ class CloudPhoneManager(tk.Tk):
             canvas_width = CANVAS_WIDTH
         if canvas_height <= 1:
             canvas_height = CANVAS_HEIGHT
-        scale = min(canvas_width / CANVAS_WIDTH, canvas_height / CANVAS_HEIGHT)
+
+        columns = 4
+        rows = 4
+        block_height = PHONE_HEIGHT + 2 + ID_ROW_HEIGHT
+        min_padding_x = 16
+        min_padding_y = 20
+        min_gap_x = 12
+        min_gap_y = 12
+        scale_x = (canvas_width - min_padding_x * 2 - min_gap_x * (columns - 1)) / (PHONE_WIDTH * columns)
+        scale_y = (canvas_height - min_padding_y * 2 - min_gap_y * (rows - 1)) / (block_height * rows)
+        scale = min(scale_x, scale_y)
         scale = max(0.5, scale)
-        offset_x = max(0, int((canvas_width - CANVAS_WIDTH * scale) / 2))
-        offset_y = max(0, int((canvas_height - CANVAS_HEIGHT * scale) / 2))
+        card_width = PHONE_WIDTH * scale
+        block_height_scaled = block_height * scale
+        offset_x = min_padding_x
+        offset_y = min_padding_y
+        gap_x = max(min_gap_x, (canvas_width - offset_x * 2 - card_width * columns) / (columns - 1))
+        gap_y = max(min_gap_y, (canvas_height - offset_y * 2 - block_height_scaled * rows) / (rows - 1))
 
         changed = (
             force
             or abs(scale - self.grid_scale) > 0.01
             or offset_x != self.grid_offset_x
             or offset_y != self.grid_offset_y
+            or abs(gap_x - self.grid_gap_x) > 0.5
+            or abs(gap_y - self.grid_gap_y) > 0.5
         )
         self.grid_scale = scale
         self.grid_offset_x = offset_x
         self.grid_offset_y = offset_y
+        self.grid_gap_x = gap_x
+        self.grid_gap_y = gap_y
         self.position_grid_items()
         return changed
 
     def position_grid_items(self):
         self.ensure_grid_items()
         for index in range(MAX_PHONES):
-            x, y = self.get_phone_position(index)
-            display_x = self.grid_offset_x + int(x * self.grid_scale)
-            display_y = self.grid_offset_y + int(y * self.grid_scale)
+            display_x, display_y = self.get_phone_display_position(index)
             self.phone_canvas.coords(self.phone_card_items[index], display_x, display_y)
             self.phone_canvas.coords(
                 self.phone_id_items[index],
                 display_x,
                 display_y + int((PHONE_HEIGHT + 2) * self.grid_scale),
             )
+
+    def get_phone_display_position(self, index):
+        row = index // 4
+        column = index % 4
+        card_w, block_h = self.scaled_size(PHONE_WIDTH, PHONE_HEIGHT + 2 + ID_ROW_HEIGHT)
+        display_x = self.grid_offset_x + int(column * (card_w + self.grid_gap_x))
+        display_y = self.grid_offset_y + int(row * (block_h + self.grid_gap_y))
+        return display_x, display_y
 
     def scaled_size(self, width, height):
         return max(1, int(width * self.grid_scale)), max(1, int(height * self.grid_scale))
@@ -480,9 +506,7 @@ class CloudPhoneManager(tk.Tk):
 
     def get_phone_index_at(self, x, y):
         for index in range(MAX_PHONES):
-            card_x, card_y = self.get_phone_position(index)
-            display_x = self.grid_offset_x + int(card_x * self.grid_scale)
-            display_y = self.grid_offset_y + int(card_y * self.grid_scale)
+            display_x, display_y = self.get_phone_display_position(index)
             display_w, display_h = self.scaled_size(PHONE_WIDTH, PHONE_HEIGHT)
             if display_x <= x <= display_x + display_w and display_y <= y <= display_y + display_h:
                 return index
