@@ -30,8 +30,8 @@ ID_ROW_HEIGHT = 22
 PROGRESS_WIDTH = 112
 PROGRESS_HEIGHT = 24
 SIDEBAR_WIDTH = 148
-VIDEO_TARGET_FPS = 6
-ZOOM_TARGET_FPS = 3
+VIDEO_TARGET_FPS = 10
+ZOOM_TARGET_FPS = 5
 CANVAS_X = SIDEBAR_WIDTH + 1
 CANVAS_WIDTH = 1160 - CANVAS_X
 CANVAS_HEIGHT = 650
@@ -58,7 +58,7 @@ class CloudPhoneManager(tk.Tk):
 
         self.title("红手指")
         self.geometry("1160x650")
-        self.minsize(1160, 650)
+        self.minsize(860, 520)
         self.resizable(True, True)
         self.configure(bg="#f6f8fb")
 
@@ -108,6 +108,15 @@ class CloudPhoneManager(tk.Tk):
         self.grid_base_image = None
         self.grid_photo_image = None
         self.grid_image_item = None
+        self.phone_card_items = []
+        self.phone_id_items = []
+        self.phone_card_images = [None] * MAX_PHONES
+        self.phone_id_images = [None] * MAX_PHONES
+        self.default_phone_cards = [None] * MAX_PHONES
+        self.grid_scale = 1.0
+        self.grid_offset_x = 0
+        self.grid_offset_y = 0
+        self._grid_resize_after_id = None
         self.phone_canvas = None
         self.phone_videos = [None] * MAX_PHONES
         self.phone_captures = {}
@@ -258,7 +267,6 @@ class CloudPhoneManager(tk.Tk):
             highlightthickness=0,
         )
         self.phone_canvas.place(x=CANVAS_X, y=0, width=CANVAS_WIDTH, height=CANVAS_HEIGHT)
-        self.grid_image_item = self.phone_canvas.create_image(0, 0, anchor=tk.NW)
         self.phone_canvas.bind("<Button-1>", self.on_phone_canvas_click)
         self.build_progress_controls()
 
@@ -336,50 +344,134 @@ class CloudPhoneManager(tk.Tk):
         self._last_main_size = (width, height)
         self.sidebar.place(x=0, y=0, width=SIDEBAR_WIDTH, height=height)
         self.divider.place(x=SIDEBAR_WIDTH, y=0, width=1, height=height)
-        canvas_width = max(CANVAS_WIDTH, width - CANVAS_X)
-        canvas_height = max(CANVAS_HEIGHT, height)
+        canvas_width = max(1, width - CANVAS_X)
+        canvas_height = max(1, height)
         self.phone_canvas.place(x=CANVAS_X, y=0, width=canvas_width, height=canvas_height)
+        self.schedule_grid_resize()
 
     def show_all_phones(self):
         self.stop_video()
         self.current_content_pil = None
         self.current_zoom_content_pil = None
-        self.build_grid_base_image()
-        self.render_phone_grid()
+        self.ensure_grid_items()
+        self.update_grid_layout(force=True)
+        self.render_phone_grid(force=True)
         self.update_zoom_image_from_current()
 
     def build_grid_base_image(self):
-        image = Image.new("RGB", (CANVAS_WIDTH, CANVAS_HEIGHT), "#f6f8fb")
-        for index, phone_id in enumerate(self.phone_ids):
-            x, y = self.get_phone_position(index)
-            id_row = self.make_id_row_pil(phone_id)
-            image.paste(id_row.convert("RGB"), (x, y + PHONE_HEIGHT + 2), id_row)
-        self.grid_base_image = image
+        self.refresh_id_rows()
 
     def get_phone_position(self, index):
         row = index // 4
         column = index % 4
         return GRID_LEFT + column * GRID_COL_STEP, GRID_TOP + row * GRID_ROW_STEP
 
-    def render_phone_grid(self, content_image=None):
-        if self.grid_base_image is None:
-            self.build_grid_base_image()
+    def ensure_grid_items(self):
+        if self.phone_card_items:
+            return
+        for index in range(MAX_PHONES):
+            self.phone_card_items.append(self.phone_canvas.create_image(0, 0, anchor=tk.NW))
+            self.phone_id_items.append(self.phone_canvas.create_image(0, 0, anchor=tk.NW))
 
-        image = self.grid_base_image.copy()
+    def schedule_grid_resize(self):
+        if self._grid_resize_after_id is not None:
+            self.after_cancel(self._grid_resize_after_id)
+        self._grid_resize_after_id = self.after(80, self.on_grid_resize)
+
+    def on_grid_resize(self):
+        self._grid_resize_after_id = None
+        if self.update_grid_layout():
+            self.render_phone_grid(force=True)
+        else:
+            self.position_grid_items()
+
+    def update_grid_layout(self, force=False):
+        canvas_width = max(1, self.phone_canvas.winfo_width())
+        canvas_height = max(1, self.phone_canvas.winfo_height())
+        if canvas_width <= 1:
+            canvas_width = CANVAS_WIDTH
+        if canvas_height <= 1:
+            canvas_height = CANVAS_HEIGHT
+        scale = min(canvas_width / CANVAS_WIDTH, canvas_height / CANVAS_HEIGHT)
+        scale = max(0.5, scale)
+        offset_x = max(0, int((canvas_width - CANVAS_WIDTH * scale) / 2))
+        offset_y = max(0, int((canvas_height - CANVAS_HEIGHT * scale) / 2))
+
+        changed = (
+            force
+            or abs(scale - self.grid_scale) > 0.01
+            or offset_x != self.grid_offset_x
+            or offset_y != self.grid_offset_y
+        )
+        self.grid_scale = scale
+        self.grid_offset_x = offset_x
+        self.grid_offset_y = offset_y
+        self.position_grid_items()
+        return changed
+
+    def position_grid_items(self):
+        self.ensure_grid_items()
         for index in range(MAX_PHONES):
             x, y = self.get_phone_position(index)
+            display_x = self.grid_offset_x + int(x * self.grid_scale)
+            display_y = self.grid_offset_y + int(y * self.grid_scale)
+            self.phone_canvas.coords(self.phone_card_items[index], display_x, display_y)
+            self.phone_canvas.coords(
+                self.phone_id_items[index],
+                display_x,
+                display_y + int((PHONE_HEIGHT + 2) * self.grid_scale),
+            )
+
+    def scaled_size(self, width, height):
+        return max(1, int(width * self.grid_scale)), max(1, int(height * self.grid_scale))
+
+    def resize_for_grid(self, image, width, height, resample=Image.BILINEAR):
+        target_size = self.scaled_size(width, height)
+        if image.size == target_size:
+            return image
+        return image.resize(target_size, resample)
+
+    def get_default_phone_card(self, index):
+        if self.default_phone_cards[index] is None:
+            self.default_phone_cards[index] = self.make_phone_card_pil(index + 1)
+        return self.default_phone_cards[index]
+
+    def render_phone_grid(self, content_image=None, force=False):
+        self.ensure_grid_items()
+        if force:
+            self.position_grid_items()
+            for index in range(MAX_PHONES):
+                self.update_id_row_item(index)
+
+        shared_photo = None
+        for index in range(MAX_PHONES):
             if index in self.phone_preview_frames:
                 card = self.phone_preview_frames[index]
-            elif content_image is not None:
-                card = content_image
-            elif self.current_content_pil is not None:
-                card = self.current_content_pil
+                self.update_phone_card_item(index, card)
+            elif content_image is not None or self.current_content_pil is not None:
+                card = content_image or self.current_content_pil
+                if shared_photo is None:
+                    shared_pil = self.resize_for_grid(card, PHONE_WIDTH, PHONE_HEIGHT)
+                    shared_photo = ImageTk.PhotoImage(shared_pil)
+                self.phone_card_images[index] = shared_photo
+                self.phone_canvas.itemconfig(self.phone_card_items[index], image=shared_photo)
             else:
-                card = self.make_phone_card_pil(index + 1)
-            image.paste(card, (x, y))
+                self.update_phone_card_item(index, self.get_default_phone_card(index))
 
-        self.grid_photo_image = ImageTk.PhotoImage(image)
-        self.phone_canvas.itemconfig(self.grid_image_item, image=self.grid_photo_image)
+    def update_phone_card_item(self, index, card):
+        self.ensure_grid_items()
+        card_image = self.resize_for_grid(card, PHONE_WIDTH, PHONE_HEIGHT)
+        photo = ImageTk.PhotoImage(card_image)
+        self.phone_card_images[index] = photo
+        self.phone_canvas.itemconfig(self.phone_card_items[index], image=photo)
+
+    def update_id_row_item(self, index):
+        self.ensure_grid_items()
+        id_row = self.make_id_row_pil(self.phone_ids[index])
+        id_row = self.resize_for_grid(id_row, ID_ROW_WIDTH, ID_ROW_HEIGHT, Image.LANCZOS)
+        photo = ImageTk.PhotoImage(id_row)
+        self.phone_id_images[index] = photo
+        self.phone_canvas.itemconfig(self.phone_id_items[index], image=photo)
 
     def on_phone_canvas_click(self, event):
         index = self.get_phone_index_at(event.x, event.y)
@@ -389,7 +481,10 @@ class CloudPhoneManager(tk.Tk):
     def get_phone_index_at(self, x, y):
         for index in range(MAX_PHONES):
             card_x, card_y = self.get_phone_position(index)
-            if card_x <= x <= card_x + PHONE_WIDTH and card_y <= y <= card_y + PHONE_HEIGHT:
+            display_x = self.grid_offset_x + int(card_x * self.grid_scale)
+            display_y = self.grid_offset_y + int(card_y * self.grid_scale)
+            display_w, display_h = self.scaled_size(PHONE_WIDTH, PHONE_HEIGHT)
+            if display_x <= x <= display_x + display_w and display_y <= y <= display_y + display_h:
                 return index
         return None
 
@@ -504,7 +599,11 @@ class CloudPhoneManager(tk.Tk):
             self.video_skip_remainder = 0.0
 
         self.current_content_pil = self.make_video_preview_image(frame)
-        self.current_zoom_content_pil = self.make_video_zoom_image(frame)
+        zoom_visible = self.zoom_window is not None and self.zoom_window.winfo_exists()
+        if zoom_visible:
+            self.current_zoom_content_pil = self.make_video_zoom_image(frame)
+        else:
+            self.current_zoom_content_pil = self.current_content_pil
         self.render_phone_grid(self.current_content_pil)
         self.video_frame_count += 1
         if self.video_frame_count % 2 == 0:
@@ -606,10 +705,14 @@ class CloudPhoneManager(tk.Tk):
             self.phone_skip_remainder[index] = 0.0
 
         self.phone_preview_frames[index] = self.make_video_preview_image(frame)
-        self.phone_zoom_frames[index] = self.make_video_zoom_image(frame)
-        self.render_phone_grid()
+        zoom_visible = self.zoom_window is not None and self.zoom_window.winfo_exists()
+        if zoom_visible and self.selected_phone_index == index:
+            self.phone_zoom_frames[index] = self.make_video_zoom_image(frame)
+        else:
+            self.phone_zoom_frames[index] = self.phone_preview_frames[index]
+        self.update_phone_card_item(index, self.phone_preview_frames[index])
         if self.selected_phone_index == index:
-            self.update_zoom_image_from_current()
+            self.update_zoom_image_from_current(throttled=True)
 
         skip_float = self.phone_video_step.get(index, 1.0) - 1 + self.phone_skip_remainder.get(index, 0.0)
         skip_count = int(skip_float)
@@ -795,8 +898,8 @@ class CloudPhoneManager(tk.Tk):
         self.hide_rename_entry()
 
     def refresh_id_rows(self):
-        self.build_grid_base_image()
-        self.render_phone_grid(self.current_content_pil)
+        for index in range(MAX_PHONES):
+            self.update_id_row_item(index)
 
     def open_script_dialog(self):
         dialog = tk.Toplevel(self)
@@ -1228,6 +1331,9 @@ class CloudPhoneManager(tk.Tk):
         self.stop_video()
         for index in list(self.phone_captures.keys()):
             self.stop_phone_video(index)
+        if self._grid_resize_after_id is not None:
+            self.after_cancel(self._grid_resize_after_id)
+            self._grid_resize_after_id = None
         if self.progress_after_id is not None:
             self.after_cancel(self.progress_after_id)
             self.progress_after_id = None
